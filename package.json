@@ -1,0 +1,26 @@
+{
+  "name": "accessflow",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w @accessflow/api\" \"npm run dev -w @accessflow/web\"",
+    "build": "npm run build -w @accessflow/api && npm run build -w @accessflow/web",
+    "test": "npm run test -w @accessflow/api && npm run test -w @accessflow/web",
+    "smoke": "node scripts/smoke-test.mjs",
+    "typecheck": "npm run typecheck -w @accessflow/api && npm run typecheck -w @accessflow/web",
+    "migrate": "npm run migrate -w @accessflow/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-musl": "4.63.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

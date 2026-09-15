@@ -1,0 +1,357 @@
+openapi: 3.1.0
+info:
+  title: AccessFlow API
+  version: 1.0.0
+  description: Authentication, request CRUD, two-level approval, catalog, and dashboard API.
+servers:
+  - url: http://localhost:8088/api
+    description: Docker Compose through Nginx
+  - url: http://localhost:3000/api
+    description: Local API development
+tags:
+  - name: Authentication
+  - name: Access catalog
+  - name: Requests
+  - name: Dashboard
+paths:
+  /health:
+    get:
+      security: []
+      summary: Check API and database health
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: ok }
+  /auth/login:
+    post:
+      security: []
+      tags: [Authentication]
+      summary: Sign in with a pre-created account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, user]
+                properties:
+                  token: { type: string }
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { description: Too many login attempts }
+  /auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get the authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /access-types:
+    get:
+      tags: [Access catalog]
+      summary: List active requestable access types
+      responses:
+        "200":
+          description: Active catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessTypes:
+                    type: array
+                    items: { $ref: "#/components/schemas/AccessType" }
+    post:
+      tags: [Access catalog]
+      summary: Add an access type (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessTypeInput" }
+      responses:
+        "201": { description: Access type created }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /access-types/admin:
+    get:
+      tags: [Access catalog]
+      summary: List active and disabled access types (admin only)
+      responses:
+        "200": { description: Complete catalog }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /access-types/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [Access catalog]
+      summary: Update or restore an access type (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AccessTypeInput"
+              minProperties: 1
+      responses:
+        "200": { description: Access type updated }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Access catalog]
+      summary: Disable an access type without removing history (admin only)
+      responses:
+        "204": { description: Access type disabled }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /requests:
+    post:
+      tags: [Requests]
+      summary: Submit an access request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accessTypeId, reason]
+              properties:
+                accessTypeId: { type: string, format: uuid }
+                reason: { type: string, minLength: 10, maxLength: 1000 }
+      responses:
+        "201":
+          description: Request created at manager stage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request: { $ref: "#/components/schemas/AccessRequest" }
+        "422": { description: Authenticated user has no assigned manager }
+  /requests/mine:
+    get:
+      tags: [Requests]
+      summary: List requests submitted by the authenticated user
+      responses:
+        "200":
+          description: Request history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items: { $ref: "#/components/schemas/AccessRequest" }
+  /requests/approvals:
+    get:
+      tags: [Requests]
+      summary: List requests assigned to the authenticated reviewer at the current stage
+      responses:
+        "200":
+          description: Manager and/or admin queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items: { $ref: "#/components/schemas/AccessRequest" }
+  /requests/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Requests]
+      summary: Get an authorized request and its decision history
+      responses:
+        "200": { description: Request detail and approvals }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Requests]
+      summary: Edit the reason while the caller's request awaits manager approval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000 }
+      responses:
+        "200": { description: Request updated }
+        "409": { description: Request is not editable by this caller or at this stage }
+    delete:
+      tags: [Requests]
+      summary: Soft-withdraw the caller's request while it awaits manager approval
+      responses:
+        "204": { description: Request marked cancelled }
+        "409": { description: Request is not cancellable by this caller or at this stage }
+  /requests/{id}/decision:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Requests]
+      summary: Approve or reject at the assigned manager/admin stage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [APPROVE, REJECT] }
+                comment: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Atomic decision saved and request transitioned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request: { $ref: "#/components/schemas/AccessRequest" }
+        "403": { description: Wrong reviewer, missing role, or self-approval }
+        "409": { description: Request is already final }
+  /dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Get live request metrics and five recent requests
+      description: Administrators receive system scope, managers receive direct-team scope, and users receive personal scope.
+      responses:
+        "200":
+          description: Dashboard aggregate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Unauthorized:
+      description: Missing, invalid, or expired JWT
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated caller lacks permission
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}
+    User:
+      type: object
+      required: [id, email, fullName, role]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        fullName: { type: string }
+        role: { type: string, enum: [USER, MANAGER, ADMIN] }
+        managerId: { type: [string, "null"], format: uuid }
+        managerName: { type: [string, "null"] }
+    AccessTypeInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+        description: { type: string, minLength: 5, maxLength: 240 }
+        icon: { type: string, enum: [shield, code, palette, ticket, database, key] }
+        isActive: { type: boolean }
+    AccessType:
+      allOf:
+        - $ref: "#/components/schemas/AccessTypeInput"
+        - type: object
+          required: [id, name, description, icon, isActive, createdAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+    AccessRequest:
+      type: object
+      required: [id, requestNumber, requesterId, requesterName, accessTypeId, accessName, reason, status, stage, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        requestNumber: { type: string, example: AR-2026-000001 }
+        requesterId: { type: string, format: uuid }
+        requesterName: { type: string }
+        requesterEmail: { type: string, format: email }
+        managerId: { type: [string, "null"], format: uuid }
+        managerName: { type: [string, "null"] }
+        accessTypeId: { type: string, format: uuid }
+        accessName: { type: string }
+        accessIcon: { type: string }
+        reason: { type: string }
+        status: { type: string, enum: [IN_PROGRESS, APPROVED, REJECTED, CANCELLED] }
+        stage: { type: string, enum: [MANAGER, ADMIN, COMPLETE] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Dashboard:
+      type: object
+      required: [scope, metrics, recent]
+      properties:
+        scope: { type: string, enum: [SYSTEM, TEAM, PERSONAL] }
+        metrics:
+          type: object
+          required: [totalRequests, inProgress, managerPending, adminPending, approved, rejected, cancelled]
+          properties:
+            totalRequests: { type: integer }
+            inProgress: { type: integer }
+            managerPending: { type: integer }
+            adminPending: { type: integer }
+            approved: { type: integer }
+            rejected: { type: integer }
+            cancelled: { type: integer }
+        recent:
+          type: array
+          items: { $ref: "#/components/schemas/AccessRequest" }
